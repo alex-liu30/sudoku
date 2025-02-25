@@ -1,0 +1,38 @@
+How fast are the algorithms? To determine the speed, I would utilize Swift's `CACurrentMediaTime()` to record the start and end times of the solving process. Subtracting the start time from the end time gives the execution time for a given puzzle. To obtain a more reliable measurement, I would load multiple puzzles from the `sudoku10k.txt` file, solve each one, and then calculate the average solving time across all the puzzles.
+
+The code's slow in many spots, here's 3 of them:
+
+1.  solveWithBacktracking(_:): This function employs a brute-force approach, recursively exploring potential solutions. Its time complexity is exponential in relation to the number of empty cells, making it particularly slow for difficult puzzles.
+
+2. updatePossibleValues(): While this function is linear in complexity, it is called repeatedly throughout the solving process. It involves iterating through each row, column, and 3x3 box to update the possible values for each cell, which can accumulate significant execution time.
+
+3. solve(): The overall solving time of the `solve()` function varies depending on the complexity of the Sudoku puzzle. Puzzles that can be solved using basic techniques will be much faster than those requiring backtracking.
+
+
+The primary data structures and their memory usage include:
+
+`Cell`:
+value: Int?`: This optional integer probably occupies 64 bits on a 64-bit system (estimate).
+`possibleValues: Set<Int>`: The set of possible values could potentially store up to 9 integers, each taking 64 bits, resulting in a significant memory footprint.
+Sudoku:
+grid: [[Cell]]`: The 9x9 grid of cells represents the main puzzle state and contributes substantially to memory usage.
+groups`: The lists representing groups of cells (rows, columns, boxes) also consume memory, although likely less than the grid itself.
+
+I think I can do the following to improve space efficiency:
+
+1.  Instead of using a `Set<Int>`, a more memory-efficient approach would be to utilize a bitmask. A `UInt16` could represent the possible values, with each bit indicating whether a specific value is possible. This would significantly reduce the memory required for each cell.
+
+2.  I coudl also use smaller integers. I know this as if the range of values is limited, using smaller integer types, such as `Int8` or `UInt8`, could reduce memory consumption without compromising functionality.
+
+While it seems Sudoku solvers would not necessarily be that helpful as humans beat AIs at chess, I believe development and use of Sudoku solvers have several benefits:
+
+I know that solvers can assist humans in solving puzzles, providing hints, and verifying solutions, so it essentially just helps us get better at the game. 
+
+
+What does this mean in terms of Sudoku?
+
+Sudoku solvers can help people learn Sudoku strategies, analyze puzzles, and improve their solving abilities. Sudoku solvers can also automatically solve puzzles of various difficulties and generate new puzzles
+
+Beyond that, what does it mean in terms of humans working with computers, especially in the context of AI?
+
+I think in the context of AI and sudoku, AI and computers simply enhance human intelligence to solve problems. AI can highlight and solve simple problems faster than humans, so it can be very beneficial for people.
