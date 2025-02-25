@@ -1,0 +1,362 @@
+import Foundation
+
+// MARK: - Data Structures
+
+struct Cell: Equatable {
+    var value: Int?
+    var possibleValues: Set<Int> = Set(1...9)
+    
+    mutating func setValue(_ newValue: Int?) {
+        value = newValue
+        possibleValues = newValue == nil ? Set(1...9) : []
+    }
+}
+
+struct Sudoku {
+    var grid: [[Cell]]
+    let groups: [[(row: Int, col: Int)]]
+    
+    init(from string: String) {
+        grid = string.split(separator: "\n").map { row in
+            row.map { char in
+                Cell(value: Int(String(char)), possibleValues: Set(1...9))
+            }
+        }
+        
+        groups = Sudoku.generateGroups()
+    }
+    
+    static func generateGroups() -> [[(row: Int, col: Int)]] {
+        var groups = [[(row: Int, col: Int)]]()
+        
+        // Rows
+        for row in 0..<9 {
+            groups.append((0..<9).map { col in (row: row, col: col) })
+        }
+        
+        // Columns
+        for col in 0..<9 {
+            groups.append((0..<9).map { row in (row: row, col: col) })
+        }
+        
+        // 3x3 boxes
+        for boxRow in 0..<3 {
+            for boxCol in 0..<3 {
+                var box = [(row: Int, col: Int)]()
+                for row in 0..<3 {
+                    for col in 0..<3 {
+                        box.append((row: boxRow * 3 + row, col: boxCol * 3 + col))
+                    }
+                }
+                groups.append(box)
+            }
+        }
+        
+        return groups
+    }
+    
+    mutating func updatePossibleValues() {
+        for group in groups {
+            let values = group.compactMap { grid[$0.row][$0.col].value }
+            for cell in group {
+                if grid[cell.row][cell.col].value == nil {
+                    grid[cell.row][cell.col].possibleValues.subtract(values)
+                }
+            }
+        }
+    }
+    
+    mutating func solveSinglePossibility() -> Bool {
+        var changed = false
+        for row in 0..<9 {
+            for col in 0..<9 {
+                if grid[row][col].value == nil && grid[row][col].possibleValues.count == 1 {
+                    grid[row][col].setValue(grid[row][col].possibleValues.first!)
+                    changed = true
+                }
+            }
+        }
+        return changed
+    }
+    
+    mutating func solveHiddenSingle() -> Bool {
+        var changed = false
+        for group in groups {
+            var valueCounts = [Int: [(row: Int, col: Int)]]()
+            for cell in group where grid[cell.row][cell.col].value == nil {
+                for value in grid[cell.row][cell.col].possibleValues {
+                    valueCounts[value, default: []].append(cell)
+                }
+            }
+            for (value, cells) in valueCounts where cells.count == 1 {
+                let cell = cells[0]
+                if grid[cell.row][cell.col].value == nil {
+                    grid[cell.row][cell.col].setValue(value)
+                    changed = true
+                }
+            }
+        }
+        return changed
+    }
+    
+    mutating func solveNakedPairs() -> Bool {
+        var changed = false
+        for group in groups {
+            let pairs = group.filter { cell in
+                grid[cell.row][cell.col].value == nil && grid[cell.row][cell.col].possibleValues.count == 2
+            }
+            for i in 0..<pairs.count {
+                for j in (i+1)..<pairs.count {
+                    let cell1 = pairs[i]
+                    let cell2 = pairs[j]
+                    if grid[cell1.row][cell1.col].possibleValues == grid[cell2.row][cell2.col].possibleValues {
+                        let pairValues = grid[cell1.row][cell1.col].possibleValues
+                        for cell in group where cell != cell1 && cell != cell2 && grid[cell.row][cell.col].value == nil {
+                            let before = grid[cell.row][cell.col].possibleValues.count
+                            grid[cell.row][cell.col].possibleValues.subtract(pairValues)
+                            if grid[cell.row][cell.col].possibleValues.count < before {
+                                changed = true
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return changed
+    }
+    
+    mutating func solve() {
+        var changed = true
+        while changed {
+            updatePossibleValues()
+            changed = solveSinglePossibility() || solveHiddenSingle() || solveNakedPairs()
+        }
+    }
+    
+    func display(debug: Bool = false) {
+        for (rowIndex, row) in grid.enumerated() {
+            if rowIndex % 3 == 0 && rowIndex != 0 {
+                print("------+-------+------")
+            }
+            for (colIndex, cell) in row.enumerated() {
+                if colIndex % 3 == 0 && colIndex != 0 {
+                    print("|", terminator: " ")
+                }
+                if let value = cell.value {
+                    print(value, terminator: " ")
+                } else if debug {
+                    print(cell.possibleValues.count, terminator: " ")
+                } else {
+                    print(".", terminator: " ")
+                }
+            }
+            print()
+        }
+        print()
+    }
+}
+
+// MARK: - Sudoku Generation
+
+extension Sudoku {
+    static func generatePuzzle(difficulty: String) -> Sudoku {
+        let cellsToRemove: Int
+        switch difficulty.lowercased() {
+        case "easy":
+            cellsToRemove = 40
+        case "medium":
+            cellsToRemove = 50
+        case "hard":
+            cellsToRemove = 60
+        default:
+            cellsToRemove = 50 // Default to medium
+        }
+        
+        var sudoku = Sudoku(from: String(repeating: "0\n", count: 9))
+        
+        // Fill the diagonal 3x3 boxes
+        for i in stride(from: 0, to: 9, by: 3) {
+            fillBox(sudoku: &sudoku, startRow: i, startCol: i)
+        }
+        
+        // Fill the rest of the grid
+        if solveWithBacktracking(&sudoku) {
+            // Remove numbers to create the puzzle
+            removeCells(sudoku: &sudoku, cellsToRemove: cellsToRemove)
+        }
+        
+        return sudoku
+    }
+    
+    private static func fillBox(sudoku: inout Sudoku, startRow: Int, startCol: Int) {
+        var numbers = Array(1...9)
+        numbers.shuffle()
+        
+        for i in 0..<3 {
+            for j in 0..<3 {
+                sudoku.grid[startRow + i][startCol + j].setValue(numbers.removeLast())
+            }
+        }
+    }
+    
+    private static func solveWithBacktracking(_ sudoku: inout Sudoku) -> Bool {
+        for row in 0..<9 {
+            for col in 0..<9 {
+                if sudoku.grid[row][col].value == nil {
+                    for num in 1...9 {
+                        if sudoku.isValid(row: row, col: col, num: num) {
+                            sudoku.grid[row][col].setValue(num)
+                            if solveWithBacktracking(&sudoku) {
+                                return true
+                            }
+                            sudoku.grid[row][col].setValue(nil)
+                        }
+                    }
+                    return false
+                }
+            }
+        }
+        return true
+    }
+    
+    private static func removeCells(sudoku: inout Sudoku, cellsToRemove: Int) {
+        var cellsRemoved = 0
+        while cellsRemoved < cellsToRemove {
+            let row = Int.random(in: 0..<9)
+            let col = Int.random(in: 0..<9)
+            if sudoku.grid[row][col].value != nil {
+                sudoku.grid[row][col].setValue(nil)
+                cellsRemoved += 1
+            }
+        }
+    }
+    
+    func isValid(row: Int, col: Int, num: Int) -> Bool {
+        for i in 0..<9 {
+            if grid[row][i].value == num { return false }
+            if grid[i][col].value == num { return false }
+            let boxRow = 3 * (row / 3) + i / 3
+            let boxCol = 3 * (col / 3) + i % 3
+            if grid[boxRow][boxCol].value == num { return false }
+        }
+        return true
+    }
+    
+    static func solveWithBacktracking(_ sudoku: inout Sudoku) -> Bool {
+            for row in 0..<9 {
+                for col in 0..<9 {
+                    if sudoku.grid[row][col].value == nil {
+                        for num in 1...9 {
+                            if sudoku.isValid(row: row, col: col, num: num) {
+                                sudoku.grid[row][col].setValue(num)
+                                if solveWithBacktracking(&sudoku) {
+                                    return true
+                                }
+                                sudoku.grid[row][col].setValue(nil)
+                            }
+                        }
+                        return false
+                    }
+                }
+            }
+            return true
+        }
+    }
+    
+
+// MARK: - File I/O
+
+func readSudokuFromFile(named fileName: String) -> Sudoku? {
+    guard let url = Bundle.main.url(forResource: fileName, withExtension: "txt") else {
+        print("File not found.")
+        return nil
+    }
+    
+    do {
+        let contents = try String(contentsOf: url)
+        return Sudoku(from: contents)
+    } catch {
+        print("Error reading file: \(error)")
+        return nil
+    }
+}
+
+// MARK: - User Interface
+
+class SudokuSolverUI {
+    var sudoku: Sudoku
+    
+    init(sudoku: Sudoku) {
+        self.sudoku = sudoku
+    }
+    
+    func run() {
+        while true {
+            print("\nSudoku Solver Menu:")
+            print("1. Display Sudoku")
+            print("2. Solve Sudoku")
+            print("3. Generate New Puzzle")
+            print("4. Exit")
+            
+            if let choice = readLine(), let option = Int(choice) {
+                switch option {
+                case 1:
+                    sudoku.display()
+                case 2:
+                    sudoku.solve()
+                    if sudoku.isSolved() {
+                        print("Sudoku solved!")
+                        sudoku.display()
+                    } else {
+                        print("Couldn't solve completely. Using backtracking...")
+                        var tempSudoku = sudoku // Create a copy for backtracking
+                        if Sudoku.solveWithBacktracking(&tempSudoku) { // Pass the copy
+                            print("Sudoku solved with backtracking!")
+                            sudoku = tempSudoku // Update original Sudoku with solved copy
+                            sudoku.display()
+                        } else {
+                            print("This Sudoku is unsolvable.")
+                        }
+                    }
+                case 3:
+                    print("Enter difficulty (easy, medium, hard):")
+                    if let difficultyStr = readLine() {
+                        sudoku = Sudoku.generatePuzzle(difficulty: difficultyStr)
+                        print("New puzzle generated:")
+                        sudoku.display()
+                    } else {
+                        print("Invalid input.")
+                    }
+                case 4:
+                    print("Thank you for using Sudoku Solver!")
+                    return
+                default:
+                    print("Invalid option. Please try again.")
+                }
+            } else {
+                print("Invalid input. Please enter a number.")
+            }
+        }
+    }
+}
+
+// MARK: - Main Program
+
+func main() {
+    print("Welcome to the Sudoku Solver!")
+    
+    // Ask the user to select a difficulty level at the start
+    print("Choose a difficulty level (easy, medium, hard):")
+    if let difficultyStr = readLine() {
+        let initialSudoku = Sudoku.generatePuzzle(difficulty: difficultyStr)
+        let ui = SudokuSolverUI(sudoku: initialSudoku)
+        ui.run()
+    } else {
+        print("Invalid input. Generating a medium difficulty puzzle.")
+        let initialSudoku = Sudoku.generatePuzzle(difficulty: "medium")
+        let ui = SudokuSolverUI(sudoku: initialSudoku)
+        ui.run()
+    }
+}
+
+main()
