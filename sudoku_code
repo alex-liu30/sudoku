@@ -356,7 +356,7 @@ struct SudokuApp: App {
 }
 
 /*
-//Hi, just to be extremely clear here is the full list of features:
+//Hi, just to be extremely clear here is the full list of features (using AI to describe what I did):
 
 Core Functionality:
 
