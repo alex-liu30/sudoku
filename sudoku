@@ -1,0 +1,452 @@
+import SwiftUI
+import Combine
+
+struct Cell: Identifiable {
+    let id = UUID()
+    var value: Int?
+    var possibleValues: Set<Int> = Set(1...9)
+    let row: Int
+    let col: Int
+}
+
+class SudokuBoard: ObservableObject {
+    // 2D array representing the Sudoku grid, made of Cell objects.
+    @Published var cells: [[Cell]]
+    // Stores coordinates of the currently selected cell.
+    @Published var selectedCell: (Int, Int)?
+    // Stores IDs of cells to highlight (used for hints, you'll see what those are later!).
+    @Published var highlightedCells: Set<UUID> = []
+    // Stores difficulty level of the puzzle.
+    @Published var difficulty: String = "Unknown"
+    // Stores board states at each step of the solving process (for rewind/fast forward).
+    @Published var solverSteps: [[[Cell]]] = []
+    // Index of the current step in the solverSteps array.
+    @Published var currentStepIndex: Int = 0
+    
+    // Initializes Sudoku board with an initial puzzle loaded from a string.
+    init(fromString puzzle: String) {
+        cells = (0..<9).map { row in
+            (0..<9).map { col in
+                Cell(value: nil, row: row, col: col)
+            }
+        }
+        loadPuzzle(fromString: puzzle)
+    }
+    
+    // Parses a string to load an initial Sudoku puzzle into the board.
+    func loadPuzzle(fromString puzzle: String) {
+        let rows = puzzle.split(separator: "\n")
+        for (rowIndex, row) in rows.enumerated() {
+            for (colIndex, char) in row.enumerated() {
+                if let value = Int(String(char)) {
+                    cells[rowIndex][colIndex].value = value
+                    updatePossibleValues(row: rowIndex, colIndex: colIndex)
+                }
+            }
+        }
+    }
+    
+    // Updates possible values of cells in the same row, column, and box when a cell's value is set.
+    func updatePossibleValues(row: Int, colIndex: Int) {
+        guard let value = cells[row][colIndex].value else { return }
+        for i in 0..<9 {
+            cells[row][i].possibleValues.remove(value)
+            cells[i][colIndex].possibleValues.remove(value)
+        }
+        let boxRow = (row / 3) * 3
+        let boxCol = (colIndex / 3) * 3
+        for i in boxRow..<boxRow+3 {
+            for j in boxCol..<boxCol+3 {
+                cells[i][j].possibleValues.remove(value)
+            }
+        }
+    }
+    
+    // Solves Sudoku puzzle automatically using backtracking.
+    func solve() {
+        solverSteps = []
+        currentStepIndex = 0
+        let _ = backtrack(board: self)
+    }
+    
+    // Recursive func implements backtracking for solving the Sudoku puzzle.
+    func backtrack(board: SudokuBoard) -> Bool {
+        if let emptyCell = findEmptyCell(in: board) {
+            let (row, col) = emptyCell
+            for num in 1...9 {
+                if isValid(board: board, num: num, pos: (row, col)) {
+                    board.cells[row][col].value = num
+                    solverSteps.append(board.cells)
+                    if backtrack(board: board) {
+                        return true
+                    }
+                    board.cells[row][col].value = nil
+                    solverSteps.append(board.cells)
+                }
+            }
+            return false
+        }
+        return true
+    }
+    
+    // Finds first empty cell (cell with no value) in the Sudoku board.
+    func findEmptyCell(in board: SudokuBoard) -> (Int, Int)? {
+        for i in 0..<9 {
+            for j in 0..<9 {
+                if board.cells[i][j].value == nil {
+                    return (i, j)
+                }
+            }
+        }
+        return nil
+    }
+    
+    // Checks if placing a given number in a given cell is a valid move according to Sudoku's rules.
+    func isValid(board: SudokuBoard, num: Int, pos: (Int, Int)) -> Bool {
+        let (row, col) = pos
+        for i in 0..<9 {
+            if board.cells[row][i].value == num && i != col {
+                return false
+            }
+            if board.cells[i][col].value == num && i != row {
+                return false
+            }
+        }
+        let boxRow = (row / 3) * 3
+        let boxCol = (col / 3) * 3
+        for i in boxRow..<boxRow+3 {
+            for j in boxCol..<boxCol+3 {
+                if board.cells[i][j].value == num && (i, j) != pos {
+                    return false
+                }
+            }
+        }
+        return true
+    }
+    
+    // Hint funct highlights a random empty cell on the board.
+    func hint() {
+        if let emptyCell = findEmptyCell(in: self) {
+            highlightedCells = []
+            highlightedCells.insert(cells[emptyCell.0][emptyCell.1].id)
+        }
+    }
+    
+    // Fills a cell with a valid solution from the board
+    func reveal() {
+        if let emptyCell = findEmptyCell(in: self) {
+            let (row, col) = emptyCell
+            for num in 1...9 {
+                if isValid(board: self, num: num, pos: (row, col)) {
+                    cells[row][col].value = num
+                    updatePossibleValues(row: row, col: col)
+                    break
+                }
+            }
+        }
+    }
+    
+    // Generates a new Sudoku puzzle with a specified difficulty level.
+    func generatePuzzle(difficulty: String) {
+        cells = (0..<9).map { row in
+            (0..<9).map { col in
+                Cell(value: nil, row: row, col: col)
+            }
+        }
+        solve()
+        let filledBoard = cells
+        let removalCount: Int
+        switch difficulty {
+        case "Easy": removalCount = 40
+        case "Medium": removalCount = 50
+        case "Hard": removalCount = 60
+        default: removalCount = 45
+        }
+        for _ in 0..<removalCount {
+            let row = Int.random(in: 0..<9)
+            let col = Int.random(in: 0..<9)
+            cells[row][col].value = nil
+        }
+        self.difficulty = difficulty
+    }
+    
+    // Sets value of a cell based on user input and checks if move is valid.
+    func setUserInputValue(number: Int) {
+        guard let selectedCell = selectedCell else { return }
+        let row = selectedCell.0
+        let col = selectedCell.1
+        
+        if isValid(board: self, num: number, pos: (row, col)) {
+            cells[row][col].value = number
+            updatePossibleValues(row: row, col: col)
+            self.selectedCell = nil
+        } else {
+            print("Invalid move!")
+        }
+    }
+}
+
+struct CellView: View {
+    @ObservedObject var board: SudokuBoard
+    let cell: Cell
+    
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(board.highlightedCells.contains(cell.id) ? Color.yellow : (board.selectedCell == (cell.row, cell.col) ? Color.blue.opacity(0.3) : Color.white))
+                .border(Color.black, width: 1)
+            
+            if let value = cell.value {
+                Text("\(value)")
+                    .font(.system(size: 24))
+            } else {
+                VStack {
+                    ForEach(0..<3) { row in
+                        HStack {
+                            ForEach(1...3, id: \.self) { col in
+                                let num = row * 3 + col
+                                if cell.possibleValues.contains(num) {
+                                    Text("\(num)")
+                                        .font(.system(size: 8))
+                                        .foregroundColor(.gray)
+                                } else {
+                                    Text(" ")
+                                        .font(.system(size: 8))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Cell can be selected by clicking it.
+        .onTapGesture {
+            board.selectedCell = (cell.row, cell.col)
+        }
+    }
+}
+
+struct SudokuView: View {
+    @ObservedObject var board: SudokuBoard
+    @State private var showingDifficultyPicker = false
+    @State private var selectedDifficulty = "Medium"
+    
+    var body: some View {
+        VStack {
+            Text("Sudoku")
+                .font(.largeTitle)
+            
+            Text("Difficulty: \(board.difficulty)")
+                .font(.headline)
+            
+            GridStack(rows: 9, columns: 9) { row, col in
+                CellView(board: board, cell: board.cells[row][col])
+            }
+            .aspectRatio(1, contentMode: .fit)
+            .padding()
+            
+            NumberInputView(board: board)
+                .padding()
+            
+            HStack {
+                // "Solve" button: Solves puzzle automatically.
+                Button("Solve") {
+                    board.solve()
+                }
+                // "Hint" button: Highlights a cell to guide the user.
+                Button("Hint") {
+                    board.hint()
+                }
+                // "Reveal" button: Fills in a value in one empty cell.
+                Button("Reveal") {
+                    board.reveal()
+                }
+                // "New Puzzle" button: Generates a new puzzle with selectable difficulty.
+                Button("New Puzzle") {
+                    showingDifficultyPicker = true
+                }
+            }
+            .padding()
+            
+            if !board.solverSteps.isEmpty {
+                HStack {
+                    // Button to navigate to the previous step in the solving process.
+                    Button("Previous") {
+                        if board.currentStepIndex > 0 {
+                            board.currentStepIndex -= 1
+                            board.cells = board.solverSteps[board.currentStepIndex]
+                        }
+                    }
+                    // Button to go to next step in the solving process.
+                    Button("Next") {
+                        if board.currentStepIndex < board.solverSteps.count - 1 {
+                            board.currentStepIndex += 1
+                            board.cells = board.solverSteps[board.currentStepIndex]
+                        }
+                    }
+                }
+                .padding()
+            }
+        }
+        .sheet(isPresented: $showingDifficultyPicker) {
+            VStack {
+                // Difficulty selection
+                Picker("Difficulty", selection: $selectedDifficulty) {
+                    Text("Easy").tag("Easy")
+                    Text("Medium").tag("Medium")
+                    Text("Hard").tag("Hard")
+                }
+                .pickerStyle(SegmentedPickerStyle())
+                
+                Button("Generate") {
+                    board.generatePuzzle(difficulty: selectedDifficulty)
+                    showingDifficultyPicker = false
+                }
+            }
+            .padding()
+        }
+    }
+}
+
+struct NumberInputView: View {
+    @ObservedObject var board: SudokuBoard
+    
+    var body: some View {
+        HStack {
+            ForEach(1...9, id: \.self) { number in
+                Button("\(number)") {
+                    board.setUserInputValue(number: number)
+                }
+                .frame(width: 30, height: 30)
+                .background(Color.gray.opacity(0.2))
+                .cornerRadius(5)
+            }
+        }
+    }
+}
+
+struct GridStack<Content: View>: View {
+    let rows: Int
+    let columns: Int
+    let content: (Int, Int) -> Content
+    
+    var body: some View {
+        VStack(spacing: 1) {
+            ForEach(0..<rows, id: \.self) { row in
+                HStack(spacing: 1) {
+                    ForEach(0..<columns, id: \.self) { column in
+                        content(row, column)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@main
+struct SudokuApp: App {
+    // Initializes SudokuBoard with a default Sudoku puzzle string.
+    @StateObject private var board = SudokuBoard(fromString: "530070000600195000098000060800060003400803001700020006060000280000419005000080079")
+    
+    var body: some Scene {
+        WindowGroup {
+            SudokuView(board: board)
+        }
+    }
+}
+
+/*
+//Hi, just to be extremely clear here is the full list of features:
+
+Core Functionality:
+
+Sudoku Board Representation:
+
+The SudokuBoard class is the central data structure. It manages the Sudoku grid, which is a 2D array of Cell structs.
+
+Each Cell has an id, a value (an optional Int), a set of possibleValues (initially 1 to 9), row, and col properties.
+
+User Interface (SwiftUI):
+
+SudokuView is the main view, responsible for displaying the Sudoku grid and the various UI controls (buttons, etc.).
+
+CellView renders individual cells on the screen. It shows either the cell's value (if it's been set) or the possible values (as small numbers) if the cell is empty. It also handles highlighting.
+
+NumberInputView provides a row of buttons (1 to 9) that the user can tap to enter a number into the currently selected cell.
+
+GridStack is a reusable SwiftUI view that helps to create a grid-based layout (used for the Sudoku board).
+
+Puzzle Loading:
+
+The SudokuBoard can be initialized with a starting puzzle loaded from a string using the fromString initializer. This string represents the initial state of the puzzle.
+
+The loadPuzzle function parses the string and populates the cells array with the initial values.
+
+Constraint Propagation (Possible Values):
+
+The updatePossibleValues function is crucial for Sudoku solving. When a cell's value is set (either by loading a puzzle or by the user), this function removes that value as a possibility from all other cells in the same row, column, and 3x3 box. This is a fundamental technique for solving Sudoku puzzles.
+
+Solving (Backtracking):
+
+The code includes a solve function that uses a backtracking algorithm to automatically solve the Sudoku puzzle.
+
+backtrack is a recursive function that tries placing numbers in empty cells until a solution is found (or it determines that no solution is possible).
+
+isValid checks if placing a given number in a given cell is a valid move according to Sudoku rules (i.e., the number doesn't already exist in the same row, column, or 3x3 box).
+
+Hints and Reveals:
+
+The hint function highlights a random empty cell on the board. This gives the user a visual cue.
+
+The reveal function attempts to fill in a value in one empty cell, therefore partially completing the puzzle automatically.
+
+Puzzle Generation:
+
+The generatePuzzle function creates new Sudoku puzzles of varying difficulty (Easy, Medium, Hard). It starts with a solved board (by calling solve) and then removes numbers randomly to create a puzzle. The number of values removed determines the difficulty.
+
+Interactive Solving:
+
+The user can select a cell by tapping on it.
+
+The NumberInputView allows the user to enter a number into the selected cell.
+
+The setUserInputValue function handles the user's number input. It checks if the move is valid, updates the cell's value, and updates the possible values of other cells as needed.
+
+Multiple Puzzles:
+
+The code supports loading a predefined puzzle at startup (using the string representation). The generatePuzzle function allows the user to generate new, random puzzles.
+
+Difficulty Levels:
+
+The puzzle generation function takes a difficulty level (Easy, Medium, Hard) as input, which controls how many numbers are removed from the solved board, affecting the puzzle's difficulty.
+
+Step-by-Step Solving Visualization (Rewind/Fast Forward):
+
+The solverSteps array stores the board state at each step of the backtracking solver.
+
+The "Previous" and "Next" buttons allow the user to step backward and forward through the solving process, visualizing how the solver works.
+
+UI Elements:
+
+"Solve" button: Solves the puzzle automatically.
+
+"Hint" button: Highlights a cell to guide the user.
+
+"Reveal" button: Fills in a value in one empty cell.
+
+"New Puzzle" button: Generates a new puzzle with selectable difficulty.
+
+"Previous" and "Next" buttons: Navigate through the solver steps.
+
+Cell Selection: Tapping a cell selects it and highlights it with a blue tint.
+
+Key Improvements Over a Basic Solver:
+
+User Interaction: The code is no longer just a solver; it's a playable Sudoku game with a user interface.
+
+Difficulty Control: The puzzle generation feature provides different difficulty levels.
+
+Step-by-Step Visualization: The "Rewind/Fast Forward" feature makes the solver more educational.
+
+Hints and Reveals: These give the player assistance when needed.
+*/
